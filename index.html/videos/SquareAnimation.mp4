@@ -1,1 +1,14 @@
-
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Manim Animation</title>
+</head>
+<body>
+  <h1>我的 Manim 動畫</h1>
+  <video width="480" controls>
+    <source src="videos/SquareAnimation.mp4" type="video/mp4">
+    你的瀏覽器不支援影片播放
+  </video>
+</body>
+</html>
