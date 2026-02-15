@@ -21,6 +21,22 @@ DOOR_W = 6.0
 DOOR_H = 4.0
 LAYOUT = {"lobby": (0,-72,0), "gate":(0,-36,0), "motivation":(0,-132,0), "theory":(64,-132,0), "programming":(128,-132,0), "formula":(128,-208,0), "simulation":(128,-300,0), "conclusion":(128,-388,0), "future":(128,-472,0)}
 ROOM_SPECS = {"lobby": (30,30,12), "motivation":(22,18,8), "theory":(24,20,8), "programming":(24,20,8), "formula":(22,18,8), "simulation":(38,26,10), "conclusion":(22,18,8), "future":(22,18,8)}
+PDF_ROOM_MAPPING = {
+    "lobby": [1, 2],
+    "motivation": [3, 4],
+    "theory": [5, 6, 7],
+    "programming": [8, 9, 10],
+    "formula": [11, 12],
+    "simulation": [13, 14, 15, 16],
+    "conclusion": [17],
+    "future": [18],
+}
+SIM_EXPERIMENT_CONTENT = [
+    {"id": "EXP_A", "title": "I-V 量測", "focus": "照度改變對 Voc / Isc 的影響", "pdf_page": 13},
+    {"id": "EXP_B", "title": "P-V 曲線", "focus": "最大功率點 MPP 與負載匹配", "pdf_page": 14},
+    {"id": "EXP_C", "title": "溫度效應", "focus": "溫度上升造成 Voc 下降", "pdf_page": 15},
+    {"id": "EXP_D", "title": "遮蔽分析", "focus": "部分遮蔽對輸出功率衰退", "pdf_page": 16},
+]
 THEME = {"white": (0.95,0.96,0.99,1), "steel":(0.62,0.67,0.76,1), "dark":(0.05,0.06,0.1,1), "cyan":(0.02,0.85,1,1), "magenta":(0.98,0.2,0.65,1), "purple":(0.58,0.26,1,1), "green":(0.15,0.9,0.5,1)}
 MAT_CACHE = {}
 
@@ -293,12 +309,63 @@ def overlay_png(path):
     try: img.save()
     except Exception: pass
 
+def add_pdf_room_mapping_metadata(room_map):
+    """Attach PDF page mapping metadata to room anchors and scene."""
+    scene = bpy.context.scene
+    scene["pdf_room_mapping"] = {k: list(v) for k, v in PDF_ROOM_MAPPING.items()}
+    for room_name, room_obj in room_map.items():
+        anchor = bpy.data.objects.new(f"{room_name.capitalize()}_Anchor", None)
+        bpy.context.scene.collection.objects.link(anchor)
+        cx, cy, cz = room_obj["center"]
+        anchor.location = (cx, cy, cz + room_obj["h"] * 0.45)
+        anchor.empty_display_type = "CUBE"
+        anchor.empty_display_size = 0.25
+        anchor["room_name"] = room_name
+        anchor["pdf_pages"] = list(PDF_ROOM_MAPPING.get(room_name, []))
+
+
+def add_simulation_experiment_content(room_obj):
+    """Create experiment stations in Simulation room and annotate each with PDF page."""
+    cx, cy, cz = room_obj["center"]
+    floor_z = cz + 0.2
+    panel_mat = mat_emit("SimExpPanel", THEME["magenta"], 5.2)
+    table_mat = mat_pbr("SimExpTable", (0.2, 0.24, 0.3, 1), 0.36, 0.35)
+    frame_mat = mat_pbr("SimExpFrame", THEME["steel"], 0.28, 0.78)
+
+    start_x = cx - 12.0
+    gap = 8.0
+    for idx, exp in enumerate(SIM_EXPERIMENT_CONTENT):
+        px = start_x + idx * gap
+        py = cy - 4.5
+        table = box(f"SimStation_{exp['id']}_Table", (3.0, 1.8, 1.0), (px, py, floor_z + 0.5), mat=table_mat)
+        screen = box(f"SimStation_{exp['id']}_Screen", (2.4, 0.1, 1.3), (px, py + 0.86, floor_z + 1.45), mat=panel_mat)
+        frame = box(f"SimStation_{exp['id']}_Frame", (2.6, 0.14, 1.5), (px, py + 0.82, floor_z + 1.45), mat=frame_mat)
+        chart = plane(f"SimStation_{exp['id']}_Chart", 2.1, 0.7, (px, py + 0.78, floor_z + 1.46), rot=(math.radians(90), 0, 0), mat=mat_emit(f"{exp['id']}_ChartM", THEME["cyan"], 7.5))
+
+        for obj in (table, screen, frame, chart):
+            obj["experiment_id"] = exp["id"]
+            obj["experiment_title"] = exp["title"]
+            obj["experiment_focus"] = exp["focus"]
+            obj["pdf_page"] = int(exp["pdf_page"])
+            obj["room"] = "simulation"
+
+    sim_anchor = bpy.data.objects.new("Simulation_Experiments_Anchor", None)
+    bpy.context.scene.collection.objects.link(sim_anchor)
+    sim_anchor.location = (cx, cy, cz + room_obj["h"] * 0.4)
+    sim_anchor.empty_display_type = "ARROWS"
+    sim_anchor["room"] = "simulation"
+    sim_anchor["pdf_pages"] = list(PDF_ROOM_MAPPING.get("simulation", []))
+    sim_anchor["experiments"] = [item["id"] for item in SIM_EXPERIMENT_CONTENT]
+
+
 def build():
     clear_scene(); setup_env(); sky_and_ground(); forest(); cam=lights_camera_render()
     # rooms
     rs={}
     for k,c in LAYOUT.items():
         if k in ROOM_SPECS: rs[k]=room(c,*ROOM_SPECS[k], prefix=k.capitalize())
+    add_pdf_room_mapping_metadata(rs)
+    add_simulation_experiment_content(rs["simulation"])
 
     # internal partitions -> stronger "real building" feel (separated functional subspaces)
     add_internal_partitions(rs["lobby"], "Lobby", count=2, axis="x")

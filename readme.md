@@ -29,3 +29,17 @@
 ## 👥 作者
 
 21411 林俐陽、21420 蘇祈瑞
+
+
+## 🗂️ PDF 頁面與房間對應
+
+- Lobby：1-2
+- Motivation：3-4
+- Theory：5-7
+- Programming：8-10
+- Formula：11-12
+- Simulation：13-16（含模擬實驗站）
+- Conclusion：17
+- Future：18
+
+> 對應資料會寫進 Blender 場景/物件 custom properties（`pdf_room_mapping`、`pdf_pages`、`pdf_page`），方便引擎端讀取。
