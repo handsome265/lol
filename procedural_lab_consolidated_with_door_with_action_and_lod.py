@@ -1,624 +1,713 @@
-# Blender bpy script - 程式生成 AAA 科技館骨架（含 sliding door action、樹 LOD、黑色 overlay png）並匯出 glb
-# Paste into Blender Text Editor and Run. (Blender 3.x / 4.x)
-import bpy, math, os, tempfile, random
+import bpy, os, tempfile, random, math
 from mathutils import Vector, Euler
 
-# ---------------------------
-# Configuration
-# ---------------------------
-EXPORT_NAME = "procedural_lab_with_door.glb"
+# ============================================
+# 配置
+# ============================================
+EXPORT_NAME = "ultimate_lab.glb"
 blend_dir = bpy.path.abspath("//")
 if blend_dir and os.path.isdir(blend_dir):
     EXPORT_PATH = os.path.join(blend_dir, EXPORT_NAME)
 else:
     EXPORT_PATH = os.path.join(tempfile.gettempdir(), EXPORT_NAME)
 
-# also prepare path for overlay png
-EXPORT_DIR = os.path.dirname(EXPORT_PATH) or tempfile.gettempdir()
-OVERLAY_PNG = os.path.join(EXPORT_DIR, "overlay_black.png")
-
-DOOR_WIDTH = 6.0
-DOOR_HEIGHT = 4.0
-WALL_THICKNESS = 0.25
-
-WORLD_LAYOUT = {
+# 房間佈局
+LAYOUT = {
     "outdoor": (0, 0, 0),
-    "auto_door": (0, -40, 0),
-    "entrance_hall": (0, -80, 0),
-    "motivation_room": (0, -160, 0),
-    "theory_room": (100, -160, 0),
-    "programming_room": (200, -160, 0),
-    "formula_room": (200, -260, 0),
-    "simulation_center": (200, -400, 0),
-    "conclusion_room": (200, -520, 0),
-    "future_room": (200, -640, 0)
+    "auto_door": (0, -35, 0),
+    "entrance_hall": (0, -45, 0),
+    "stair_end": (0, -50, 6),
+    "motivation_room": (0, -65, 6),
+    "theory_room": (0, -85, 6),
+    "programming_room": (0, -105, 6),
+    "formula_room": (0, -125, 6),
+    "simulation_center": (0, -155, 6),
+    "conclusion_room": (0, -185, 6),
+    "future_room": (0, -205, 6),
 }
 
-# ---------------------------
-# Helpers: clear / materials
-# ---------------------------
+# 顏色主題
+COLORS = {
+    "cyan": (0.0, 0.83, 1.0, 1.0),
+    "magenta": (1.0, 0.0, 0.5, 1.0),
+    "purple": (0.5, 0.0, 1.0, 1.0),
+    "white": (0.95, 0.95, 1.0, 1.0),
+    "dark": (0.05, 0.05, 0.15, 1.0),
+}
+
+# ============================================
+# 場景清理
+# ============================================
 def clear_scene():
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete(use_global=False, confirm=False)
-    for mesh in list(bpy.data.meshes):
-        if mesh.users == 0:
+    for collection in [bpy.data.meshes, bpy.data.materials, bpy.data.images]:
+        for item in list(collection):
             try:
-                bpy.data.meshes.remove(mesh)
+                if hasattr(item, "users") and item.users == 0:
+                    collection.remove(item)
             except:
                 pass
 
 
-_material_cache = {}
+# ============================================
+# 材質系統（Blender 5.0.1 相容）
+# ============================================
+_mat_cache = {}
 
 
-def get_white_material(name="Mat_White", rough=0.3, metallic=0.0):
-    key = (name, rough, metallic)
-    if key in _material_cache:
-        return _material_cache[key]
-    mat = bpy.data.materials.new(name=name)
-    mat.use_nodes = True
-    nodes = mat.node_tree.nodes
-    out = nodes.get("Material Output")
-    principled = nodes.get("Principled BSDF")
-    if not principled:
-        principled = nodes.new(type="ShaderNodeBsdfPrincipled")
-        if out:
-            mat.node_tree.links.new(principled.outputs['BSDF'], out.inputs['Surface'])
-    principled.inputs["Base Color"].default_value = (0.96, 0.96, 0.98, 1.0)
-    principled.inputs["Roughness"].default_value = rough
-    principled.inputs["Metallic"].default_value = metallic
-    _material_cache[key] = mat
-    return mat
+def mat_pbr(name, color=(0.9, 0.9, 0.9, 1.0), rough=0.5, metallic=0.0, emit_strength=0.0):
+    """PBR 材質生成器 - Blender 5.0+ 相容"""
+    key = (
+        name,
+        tuple([round(c, 3) for c in color]),
+        round(rough, 3),
+        round(metallic, 3),
+        round(emit_strength, 3),
+    )
+    if key in _mat_cache:
+        return _mat_cache[key]
 
-
-def get_emissive_material(name="Mat_Emit", color=(0.5, 0.8, 1.0, 1.0), strength=6.0):
-    key = (name, color, strength)
-    if key in _material_cache:
-        return _material_cache[key]
-    mat = bpy.data.materials.new(name=name)
+    mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
     nodes.clear()
-    out = nodes.new(type="ShaderNodeOutputMaterial")
-    emit = nodes.new(type="ShaderNodeEmission")
-    emit.inputs['Color'].default_value = color
-    emit.inputs['Strength'].default_value = strength
-    links.new(emit.outputs['Emission'], out.inputs['Surface'])
-    _material_cache[key] = mat
+
+    # 輸出節點
+    output = nodes.new("ShaderNodeOutputMaterial")
+    output.location = (300, 0)
+
+    # Principled BSDF
+    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.location = (0, 0)
+
+    # 設置參數（Blender 5.0+ 使用新的輸入名稱）
+    bsdf.inputs["Base Color"].default_value = color
+    bsdf.inputs["Roughness"].default_value = rough
+    bsdf.inputs["Metallic"].default_value = metallic
+
+    # Emission（5.0+ 版本）
+    if emit_strength > 0:
+        try:
+            # Blender 5.0+ 使用 "Emission Color" 和 "Emission Strength"
+            bsdf.inputs["Emission Color"].default_value = color
+            bsdf.inputs["Emission Strength"].default_value = emit_strength
+        except KeyError:
+            # 舊版本回退
+            try:
+                bsdf.inputs["Emission"].default_value = color
+                bsdf.inputs["Emission Strength"].default_value = emit_strength
+            except:
+                pass
+
+    links.new(bsdf.outputs["BSDF"], output.inputs["Surface"])
+
+    _mat_cache[key] = mat
     return mat
 
 
-# ---------------------------
-# Primitives
-# ---------------------------
-def create_box(name, size, location=(0, 0, 0), rotation=(0, 0, 0), material=None):
-    bpy.ops.mesh.primitive_cube_add(size=1, location=location, rotation=rotation)
+def mat_emissive(name, color=(0.8, 0.9, 1.0, 1.0), strength=5.0):
+    """純發光材質（用於星星、燈光等）"""
+    key = ("emit_" + name, tuple([round(c, 3) for c in color]), round(strength, 3))
+    if key in _mat_cache:
+        return _mat_cache[key]
+
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+
+    output = nodes.new("ShaderNodeOutputMaterial")
+    output.location = (200, 0)
+
+    emission = nodes.new("ShaderNodeEmission")
+    emission.location = (0, 0)
+    emission.inputs["Color"].default_value = color
+    emission.inputs["Strength"].default_value = strength
+
+    links.new(emission.outputs["Emission"], output.inputs["Surface"])
+
+    _mat_cache[key] = mat
+    return mat
+
+
+def mat_glass(name, color=(0.8, 0.9, 1.0, 1.0), ior=1.45):
+    """玻璃材質"""
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+
+    output = nodes.new("ShaderNodeOutputMaterial")
+    glass = nodes.new("ShaderNodeBsdfGlass")
+    glass.inputs["Color"].default_value = color
+    glass.inputs["IOR"].default_value = ior
+
+    links.new(glass.outputs["BSDF"], output.inputs["Surface"])
+    return mat
+
+
+# ============================================
+# 幾何生成工具
+# ============================================
+def create_box(name, size, loc=(0, 0, 0), rot=(0, 0, 0), mat=None):
+    bpy.ops.mesh.primitive_cube_add(size=1, location=loc, rotation=rot)
     obj = bpy.context.object
     obj.name = name
-    obj.scale = (size[0] / 2.0, size[1] / 2.0, size[2] / 2.0)
-    bpy.context.view_layer.update()
-    if material:
+    obj.scale = (size[0] / 2, size[1] / 2, size[2] / 2)
+    if mat:
         if obj.data.materials:
-            obj.data.materials[0] = material
+            obj.data.materials[0] = mat
         else:
-            obj.data.materials.append(material)
+            obj.data.materials.append(mat)
     return obj
 
 
-def create_plane(name, size_x, size_y, location=(0, 0, 0), rotation=(0, 0, 0), material=None):
-    bpy.ops.mesh.primitive_plane_add(size=1, location=location, rotation=rotation)
+def create_cylinder(name, r, h, loc=(0, 0, 0), rot=(0, 0, 0), mat=None, verts=32):
+    bpy.ops.mesh.primitive_cylinder_add(vertices=verts, radius=r, depth=h, location=loc, rotation=rot)
     obj = bpy.context.object
     obj.name = name
-    obj.scale = (size_x / 2.0, size_y / 2.0, 1)
-    bpy.context.view_layer.update()
-    if material:
+    if mat:
         if obj.data.materials:
-            obj.data.materials[0] = material
+            obj.data.materials[0] = mat
         else:
-            obj.data.materials.append(material)
+            obj.data.materials.append(mat)
     return obj
 
 
-def create_cylinder(name, radius, depth, location=(0, 0, 0), material=None, verts=24):
-    bpy.ops.mesh.primitive_cylinder_add(vertices=verts, radius=radius, depth=depth, location=location)
+def create_plane(name, sx, sy, loc=(0, 0, 0), rot=(0, 0, 0), mat=None):
+    bpy.ops.mesh.primitive_plane_add(size=1, location=loc, rotation=rot)
     obj = bpy.context.object
     obj.name = name
-    if material:
+    obj.scale = (sx / 2, sy / 2, 1)
+    if mat:
         if obj.data.materials:
-            obj.data.materials[0] = material
+            obj.data.materials[0] = mat
         else:
-            obj.data.materials.append(material)
+            obj.data.materials.append(mat)
     return obj
 
 
-# ---------------------------
-# Composite pieces + LOD trees
-# ---------------------------
-def create_ground():
-    mat = get_white_material("GroundMat", rough=0.95)
-    g = create_plane("Ground", 300, 300, location=(0, 0, 0), material=mat)
-    g.location.z = -0.01
-    return g
+def create_torus(name, major_r, minor_r, loc=(0, 0, 0), rot=(0, 0, 0), mat=None):
+    bpy.ops.mesh.primitive_torus_add(major_radius=major_r, minor_radius=minor_r, location=loc, rotation=rot)
+    obj = bpy.context.object
+    obj.name = name
+    if mat:
+        if obj.data.materials:
+            obj.data.materials[0] = mat
+        else:
+            obj.data.materials.append(mat)
+    return obj
 
 
-def create_sky_dome(radius=180):
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, location=(0, 0, 0))
-    dome = bpy.context.object
-    dome.name = "SkyDome"
-    dome.scale.x = -1
-    dome.data.materials.append(get_emissive_material("SkyMat", color=(0.02, 0.03, 0.08, 1.0), strength=0.06))
-    return dome
-
-
-def create_dense_forest_lod(rows=6, cols=6, spacing=18, base_y=-160):
-    trunk_mat = get_white_material("Trunk", rough=0.9)
-    leaf_mat = get_emissive_material("Leaf", color=(0.02, 0.18, 0.05, 1.0), strength=0.6)
-    low_mat = get_white_material("LeafLow", rough=1.0)
-    for i in range(rows):
-        for j in range(cols):
-            x = (i - rows / 2) * spacing + random.uniform(-3.0, 3.0)
-            y = base_y + (j - cols / 2) * spacing + random.uniform(-3.0, 3.0)
-            h = random.uniform(5.0, 8.0)
-            r = random.uniform(0.25, 0.6)
-            trunk = create_cylinder(f"Trunk_{i}_{j}", r, h, location=(x, y, h / 2), material=trunk_mat)
-            # create parent empty
-            parent = bpy.data.objects.new(f"Tree_{i}_{j}_parent", None)
-            bpy.context.scene.collection.objects.link(parent)
-            parent.location = (x, y, 0)
-            # high canopy (sphere)
-            bpy.ops.mesh.primitive_uv_sphere_add(radius=random.uniform(1.6, 2.6), location=(x, y, h + 1.0))
-            high = bpy.context.object
-            high.name = f"CanopyHigh_{i}_{j}"
-            high.data.materials.append(leaf_mat)
-            high.parent = parent
-            high.location = (0, 0, h + 1.0)
-            # low canopy (simple plane billboard)
-            bpy.ops.mesh.primitive_plane_add(size=2.0, location=(x, y, h + 0.6))
-            low = bpy.context.object
-            low.name = f"CanopyLow_{i}_{j}"
-            low.data.materials.append(low_mat)
-            low.parent = parent
-            low.location = (0, 0, h + 0.6)
-            # trunk parented
-            trunk.parent = parent
-            trunk.location = (0, 0, h / 2)
-            # custom property to describe LOD children & distances (string for GLTF-friendly)
-            parent["lod_info"] = f"levels=2;high={high.name};low={low.name};distances=8,28"
-    return True
-
-
-def create_circular_hall(radius=8.5, height=14.0, position=(0, -80, 0)):
-    verts = 64
-    bpy.ops.mesh.primitive_cylinder_add(
-        vertices=verts,
-        radius=radius + WALL_THICKNESS,
-        depth=height,
-        location=(position[0], position[1], position[2] + height / 2),
-    )
-    outer = bpy.context.object
-    outer.name = "Entrance_Outer"
-    bpy.ops.mesh.primitive_cylinder_add(
-        vertices=verts,
-        radius=radius - 0.5,
-        depth=height + 0.02,
-        location=(position[0], position[1], position[2] + height / 2),
-    )
-    inner = bpy.context.object
-    inner.name = "Entrance_Inner"
-    mod = outer.modifiers.new("bool_diff", "BOOLEAN")
-    mod.object = inner
-    mod.operation = 'DIFFERENCE'
-    bpy.context.view_layer.objects.active = outer
-    bpy.ops.object.modifier_apply(modifier=mod.name)
+# ============================================
+# 環境系統
+# ============================================
+def setup_world():
+    """設置夜晚世界"""
     try:
-        bpy.data.objects.remove(inner, do_unlink=True)
+        world = bpy.data.worlds["World"]
     except:
-        pass
-    create_box(
-        "Entrance_Floor",
-        (radius * 2 + 2, radius * 2 + 2, 0.25),
-        location=(position[0], position[1], position[2] - 0.125),
-        material=get_white_material("FloorMat", rough=0.12),
-    )
-    create_box(
-        "Entrance_Ceiling",
-        (radius * 2 + 2, radius * 2 + 2, 0.25),
-        location=(position[0], position[1], position[2] + height + 0.125),
-        material=get_white_material("CeilMat", rough=0.3),
-    )
-    outer.data.materials.append(get_white_material("HallWall", rough=0.25))
-    return outer
+        world = bpy.data.worlds.new("World")
+        bpy.context.scene.world = world
+
+    world.use_nodes = True
+    nodes = world.node_tree.nodes
+    links = world.node_tree.links
+    nodes.clear()
+
+    output = nodes.new("ShaderNodeOutputWorld")
+    bg = nodes.new("ShaderNodeBackground")
+    bg.inputs["Color"].default_value = (0.01, 0.02, 0.08, 1.0)
+    bg.inputs["Strength"].default_value = 0.3
+
+    links.new(bg.outputs["Background"], output.inputs["Surface"])
 
 
-def create_rect_room_with_doorgap(name, width, depth, height, position=(0, 0, 0), door_center_offset=(0, -0.5, 0)):
-    floor = create_box(
-        f"{name}_Floor",
-        (width, depth, 0.2),
-        location=(position[0], position[1], position[2] - 0.1),
-        material=get_white_material("RoomFloor", rough=0.12),
-    )
-    ceiling = create_box(
-        f"{name}_Ceiling",
-        (width, depth, 0.2),
-        location=(position[0], position[1], position[2] + height + 0.1),
-        material=get_white_material("RoomCeil", rough=0.3),
-    )
-    half_w = width / 2.0
-    half_d = depth / 2.0
-    wt = WALL_THICKNESS
-    door_w = DOOR_WIDTH
-    door_center_x = position[0] + door_center_offset[0]
-    left_seg_width = max(0.5, (width / 2.0) - (door_w / 2.0))
-    right_seg_width = left_seg_width
-    front_left = create_box(
-        f"{name}_Wall_Front_L",
-        (left_seg_width, wt, height),
-        location=(position[0] - (width / 2.0 - left_seg_width / 2.0), position[1] - half_d + wt / 2, position[2] + height / 2),
-        material=get_white_material("RoomWall", rough=0.28),
-    )
-    front_right = create_box(
-        f"{name}_Wall_Front_R",
-        (right_seg_width, wt, height),
-        location=(position[0] + (width / 2.0 - right_seg_width / 2.0), position[1] - half_d + wt / 2, position[2] + height / 2),
-        material=get_white_material("RoomWall", rough=0.28),
-    )
-    back = create_box(
-        f"{name}_Wall_Back",
-        (width, wt, height),
-        location=(position[0], position[1] + half_d - wt / 2, position[2] + height / 2),
-        material=get_white_material("RoomWall", rough=0.28),
-    )
-    left = create_box(
-        f"{name}_Wall_Left",
-        (depth, wt, height),
-        location=(position[0] - half_w + wt / 2, position[1], position[2] + height / 2),
-        material=get_white_material("RoomWall", rough=0.28),
-    )
-    right = create_box(
-        f"{name}_Wall_Right",
-        (depth, wt, height),
-        location=(position[0] + half_w - wt / 2, position[1], position[2] + height / 2),
-        material=get_white_material("RoomWall", rough=0.28),
-    )
-    left.rotation_euler = Euler((0, 0, math.radians(90)), 'XYZ')
-    right.rotation_euler = Euler((0, 0, math.radians(90)), 'XYZ')
-    door_world_x = door_center_x
-    door_world_y = position[1] - half_d
-    door_world_z = position[2]
-    return {
-        "parts": [floor, ceiling, front_left, front_right, back, left, right],
-        "door_pos": (door_world_x, door_world_y + wt / 2, door_world_z),
-    }
+def create_star_field(count=400, radius=280.0):
+    """生成星空（使用純發光材質）"""
+    star_mat = mat_emissive("Star", color=(1.0, 1.0, 1.0, 1.0), strength=10.0)
 
+    rand = random.Random(42)
+    for i in range(count):
+        theta = rand.uniform(0, math.pi * 0.5)
+        phi = rand.uniform(0, 2 * math.pi)
 
-def create_sliding_door_group(position=(0, -40, 0), width=DOOR_WIDTH, height=DOOR_HEIGHT, thickness=0.12, orientation='Y'):
-    door_empty = bpy.data.objects.new("door_group", None)
-    bpy.context.scene.collection.objects.link(door_empty)
-    door_empty.location = position
-    left_loc = (-(width / 4.0), 0.0, height / 2.0)
-    right_loc = ((width / 4.0), 0.0, height / 2.0)
-    left = create_box(
-        "door_L",
-        (width / 2.0 - 0.02, thickness, height),
-        location=(position[0] + left_loc[0], position[1] + left_loc[1], position[2] + left_loc[2]),
-        material=get_white_material("DoorMat", rough=0.18),
-    )
-    right = create_box(
-        "door_R",
-        (width / 2.0 - 0.02, thickness, height),
-        location=(position[0] + right_loc[0], position[1] + right_loc[1], position[2] + right_loc[2]),
-        material=get_white_material("DoorMat", rough=0.18),
-    )
-    left.parent = door_empty
-    right.parent = door_empty
-    left["closed_pos"] = tuple(left.location)
-    right["closed_pos"] = tuple(right.location)
-    open_offset = width * 0.5 + 0.05
-    left_open = Vector(left.location) + Vector((-open_offset, 0.0, 0.0))
-    right_open = Vector(right.location) + Vector((open_offset, 0.0, 0.0))
-    left["open_pos"] = tuple(left_open)
-    right["open_pos"] = tuple(right_open)
-    door_empty["is_door_group"] = True
-    door_empty["panels"] = [left.name, right.name]
-    return door_empty
+        x = radius * math.sin(theta) * math.cos(phi)
+        y = radius * math.sin(theta) * math.sin(phi)
+        z = radius * math.cos(theta)
 
-
-# create single action "Door_Open" and keyframe both panels into it; then push the action as an NLA strip on the door empty (for easy engine selection)
-def animate_sliding_door_as_action(door_empty, frame_start=1, frame_open=36, frame_close=120):
-    panels = door_empty.get("panels", [])
-    # make new action
-    action_name = "Door_Open"
-    if action_name in bpy.data.actions:
-        action = bpy.data.actions[action_name]
-    else:
-        action = bpy.data.actions.new(action_name)
-    # for each panel, assign action and insert keyframes (location)
-    for name in panels:
-        panel = bpy.data.objects.get(name)
-        if not panel:
-            continue
-        panel.animation_data_create()
-        # assign the shared action to panel's animation_data - this will write fcurves into this action
-        panel.animation_data.action = action
-        closed = Vector(panel["closed_pos"])
-        openp = Vector(panel["open_pos"])
-        panel.location = closed
-        panel.keyframe_insert(data_path="location", frame=frame_start)
-        panel.location = openp
-        panel.keyframe_insert(data_path="location", frame=frame_open)
-        panel.location = closed
-        panel.keyframe_insert(data_path="location", frame=frame_close)
-    # create NLA strip on the door_empty referencing the action (so engine artists can find it easily)
-    door_empty.animation_data_create()
-    track = door_empty.animation_data.nla_tracks.new()
-    track.name = "Door_NLA"
-    strip = track.strips.new(action.name + "_strip", frame_start, action)
-    strip.action_frame_start = frame_start
-    strip.action_frame_end = frame_close
-    # tag door_empty with the action name for easy lookup in engine
-    door_empty["door_action"] = action.name
-
-
-def create_portal_frame(position=(0, -120, 0), width=4.5, height=5.0):
-    outer = create_box(
-        "Portal_Frame",
-        (width + 0.4, 0.4, height + 0.4),
-        location=(position[0], position[1], position[2] + height / 2),
-        material=get_white_material("PortalFrame", rough=0.15),
-    )
-    plane = create_plane(
-        "Portal_Surface",
-        width - 0.1,
-        height - 0.1,
-        location=(position[0], position[1] + 0.01, position[2] + height / 2),
-        material=get_emissive_material("PortalEmit", color=(0.6, 0.85, 1.0, 1.0), strength=8.0),
-    )
-    return (outer, plane)
-
-
-def create_bridge(position=(50, -160, 0), length=20, width=3.0):
-    bridge = create_box(
-        "Bridge",
-        (length, width, 0.15),
-        location=(position[0], position[1], position[2] + 0.08),
-        material=get_white_material("BridgeFloor", rough=0.18),
-    )
-    edge_l = create_box(
-        "Bridge_Edge_L",
-        (length, 0.06, 0.05),
-        location=(position[0], position[1] - width / 2 - 0.03, position[2] + 0.09),
-        material=get_emissive_material("BridgeEdgeMat", color=(0.5, 0.85, 1.0, 1.0), strength=6.0),
-    )
-    edge_r = create_box(
-        "Bridge_Edge_R",
-        (length, 0.06, 0.05),
-        location=(position[0], position[1] + width / 2 + 0.03, position[2] + 0.09),
-        material=get_emissive_material("BridgeEdgeMat", color=(0.5, 0.85, 1.0, 1.0), strength=6.0),
-    )
-    return [bridge, edge_l, edge_r]
-
-
-def create_spiral_staircase(center=(0, -80, 0), steps=20, radius=3.0, step_height=0.28, step_depth=0.8):
-    objs = []
-    for i in range(steps):
-        angle = i * (2 * math.pi / steps)
-        x = center[0] + math.cos(angle) * radius
-        y = center[1] + math.sin(angle) * radius
-        z = center[2] + i * step_height
-        step = create_box(
-            f"Stair_{i}",
-            (radius * 0.5, step_depth, 0.15),
-            location=(x, y, z + 0.075),
-            material=get_white_material("StairMat", rough=0.25),
+        size = rand.uniform(0.08, 0.2)
+        create_cylinder(
+            f"Star_{i}",
+            size,
+            size * 3,
+            loc=(x, y, z),
+            rot=(rand.random(), rand.random(), rand.random()),
+            mat=star_mat,
+            verts=6,
         )
-        step.rotation_euler = Euler((0, 0, -angle), 'XYZ')
-        objs.append(step)
-    return objs
 
 
-def create_projection_plane(position=(0, -78, 4), w=6, h=3):
-    plane = create_plane(
-        "ProjectionPlane",
-        w,
-        h,
-        location=(position[0], position[1], position[2]),
-        material=get_emissive_material("ProjectionMat", color=(0.9, 0.95, 1.0, 1.0), strength=4.0),
+def create_ground_and_path():
+    """地面和步道"""
+    # 主地面
+    ground_mat = mat_pbr("Ground", color=(0.05, 0.06, 0.08, 1.0), rough=0.9)
+    create_plane("Ground", 800, 800, loc=(0, 0, -0.1), mat=ground_mat)
+
+    # 步道
+    path_length = abs(LAYOUT["entrance_hall"][1] - LAYOUT["outdoor"][1]) + 30
+    path_center_y = (LAYOUT["outdoor"][1] + LAYOUT["entrance_hall"][1]) / 2
+
+    path_mat = mat_pbr("Path", color=(0.2, 0.22, 0.25, 1.0), rough=0.7, metallic=0.1)
+    create_plane("Walkway", 8, path_length, loc=(0, path_center_y, 0), mat=path_mat)
+
+    # 發光邊緣
+    edge_mat = mat_pbr("EdgeGlow", color=COLORS["cyan"], emit_strength=5.0)
+    create_plane("EdgeL", 0.3, path_length, loc=(4.2, path_center_y, 0.02), mat=edge_mat)
+    create_plane("EdgeR", 0.3, path_length, loc=(-4.2, path_center_y, 0.02), mat=edge_mat)
+
+    # 發光粒子線
+    particle_mat = mat_emissive("Particle", color=COLORS["purple"], strength=8.0)
+    for i in range(int(path_length / 3)):
+        y_pos = LAYOUT["outdoor"][1] - i * 3
+        create_cylinder(
+            f"Particle_{i}",
+            0.15,
+            0.3,
+            loc=(random.uniform(-3, 3), y_pos, 0.2),
+            mat=particle_mat,
+            verts=8,
+        )
+
+
+# ============================================
+# 森林系統
+# ============================================
+def create_tree(x, y, seed=0):
+    """生成單棵樹"""
+    rand = random.Random(seed)
+
+    # 樹幹
+    trunk_h = rand.uniform(6.0, 10.0)
+    trunk_r = rand.uniform(0.3, 0.6)
+    trunk_mat = mat_pbr("Trunk", color=(0.15, 0.1, 0.08, 1.0), rough=0.9)
+    trunk = create_cylinder("Trunk", trunk_r, trunk_h, loc=(x, y, trunk_h / 2), mat=trunk_mat, verts=12)
+
+    # 樹冠
+    crown_mat = mat_pbr("Crown", color=(0.05, 0.3, 0.1, 1.0), rough=0.8, emit_strength=0.3)
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=trunk_r * 4, location=(x, y, trunk_h + trunk_r * 2.5))
+    crown = bpy.context.object
+    crown.data.materials.append(crown_mat)
+
+    # 合併
+    bpy.ops.object.select_all(action='DESELECT')
+    trunk.select_set(True)
+    crown.select_set(True)
+    bpy.context.view_layer.objects.active = trunk
+    bpy.ops.object.join()
+
+    return bpy.context.object
+
+
+def create_forest():
+    """生成密集森林"""
+    path_start = LAYOUT["outdoor"][1] + 10
+    path_end = LAYOUT["entrance_hall"][1] - 10
+    path_length = abs(path_end - path_start)
+
+    # 左側森林（3排）
+    for row in range(3):
+        x_base = -12 - row * 5
+        for i in range(int(path_length / 5)):
+            y = path_start - i * 5 + random.uniform(-2, 2)
+            x = x_base + random.uniform(-2, 2)
+            create_tree(x, y, seed=row * 100 + i)
+
+    # 右側森林（3排）
+    for row in range(3):
+        x_base = 12 + row * 5
+        for i in range(int(path_length / 5)):
+            y = path_start - i * 5 + random.uniform(-2, 2)
+            x = x_base + random.uniform(-2, 2)
+            create_tree(x, y, seed=1000 + row * 100 + i)
+
+
+# ============================================
+# 建築系統
+# ============================================
+def create_auto_door(origin):
+    """自動滑門"""
+    # 門框
+    frame_mat = mat_pbr("DoorFrame", color=COLORS["cyan"], metallic=0.8, emit_strength=3.0)
+    frame_w, frame_h = 8.0, 5.0
+
+    create_box("DoorFrameTop", (frame_w, 0.3, 0.3), loc=(origin[0], origin[1], frame_h), mat=frame_mat)
+    create_box("DoorFrameL", (0.3, 0.3, frame_h), loc=(origin[0] - frame_w / 2, origin[1], frame_h / 2), mat=frame_mat)
+    create_box("DoorFrameR", (0.3, 0.3, frame_h), loc=(origin[0] + frame_w / 2, origin[1], frame_h / 2), mat=frame_mat)
+
+    # 門板
+    panel_mat = mat_glass("DoorPanel", color=(0.5, 0.7, 1.0, 1.0))
+    panel_w = frame_w / 2 - 0.2
+    panel_h = frame_h - 0.3
+
+    left_panel = create_box(
+        "DoorLeft",
+        (panel_w, 0.1, panel_h),
+        loc=(origin[0] - panel_w / 2, origin[1], panel_h / 2),
+        mat=panel_mat,
     )
-    plane.rotation_euler = Euler((0, 0, 0), 'XYZ')
-    return plane
-
-
-def create_player_placeholder(position=(0, -78, 1.0)):
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.35, location=(position[0], position[1], position[2] + 0.9))
-    head = bpy.context.object
-    head.name = "PlayerHead"
-    cyl = create_cylinder(
-        "PlayerBody",
-        radius=0.4,
-        depth=1.4,
-        location=(position[0], position[1], position[2] + 0.7),
-        material=get_white_material("PlayerMat", rough=0.9),
+    right_panel = create_box(
+        "DoorRight",
+        (panel_w, 0.1, panel_h),
+        loc=(origin[0] + panel_w / 2, origin[1], panel_h / 2),
+        mat=panel_mat,
     )
-    return (head, cyl)
+
+    # 開門動畫
+    for panel, direction in [(left_panel, -1), (right_panel, 1)]:
+        panel.keyframe_insert(data_path="location", frame=1)
+        panel.location.x = origin[0] + direction * frame_w * 0.6
+        panel.keyframe_insert(data_path="location", frame=60)
 
 
-# ---------------------------
-# Create a 1x1 black png for overlay use in Three.js
-# ---------------------------
-def save_black_overlay_png(path):
-    # create 1x1 image in Blender and save as PNG
-    img_name = "overlay_black_img"
-    if img_name in bpy.data.images:
-        img = bpy.data.images[img_name]
-    else:
-        img = bpy.data.images.new(img_name, width=1, height=1, alpha=True, float_buffer=False)
-        img.pixels = [0.0, 0.0, 0.0, 1.0]
-    img.filepath_raw = path
-    img.file_format = 'PNG'
-    try:
-        img.save()
-        print("Saved overlay PNG to:", path)
-    except Exception as e:
-        print("Failed saving overlay PNG:", e)
+def create_entrance_hall(center, radius=15.0, height=12.0):
+    """圓形入口大廳（含穹頂）"""
+    # 地板
+    floor_mat = mat_pbr("HallFloor", color=(0.9, 0.9, 0.95, 1.0), rough=0.3, metallic=0.1)
+    create_cylinder("HallFloor", radius, 0.3, loc=(center[0], center[1], 0.15), mat=floor_mat, verts=32)
 
+    # 穹頂（新增）
+    dome_mat = mat_pbr("Dome", color=(0.85, 0.90, 0.95, 1.0), rough=0.3, metallic=0.2, emit_strength=0.5)
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, location=(center[0], center[1], height))
+    dome = bpy.context.object
+    dome.name = "Dome"
+    dome.scale = (1, 1, 0.5)  # 壓扁成穹頂
+    dome.data.materials.append(dome_mat)
 
-# ---------------------------
-# View helpers
-# ---------------------------
-def set_all_view3d_to_material_preview():
-    for window in bpy.context.window_manager.windows:
-        for area in window.screen.areas:
-            if area.type == 'VIEW_3D':
-                space = area.spaces.active
-                try:
-                    space.shading.type = 'MATERIAL'
-                except:
-                    pass
-                try:
-                    space.shading.color_type = 'MATERIAL'
-                except:
-                    pass
+    # 只保留上半球
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.mesh.bisect(plane_co=(center[0], center[1], height), plane_no=(0, 0, 1), clear_inner=True)
+    bpy.ops.object.mode_set(mode='OBJECT')
 
+    # 發光圓環
+    ring_mat = mat_emissive("HallRing", color=COLORS["cyan"], strength=8.0)
+    create_torus("HallRing", radius - 0.5, 0.2, loc=(center[0], center[1], 0.3), mat=ring_mat)
 
-def apply_material_color_to_object_viewport():
-    for obj in bpy.data.objects:
-        if obj.type != 'MESH':
+    # 牆面
+    wall_mat = mat_pbr("HallWall", color=COLORS["white"], rough=0.5, metallic=0.1)
+    segments = 16
+    gap_angle = 30.0
+
+    for i in range(segments):
+        angle = (360.0 / segments) * i
+        if -gap_angle <= ((angle + 180) % 360 - 180) <= gap_angle:
             continue
-        col = None
-        if obj.data.materials:
-            mat = obj.data.materials[0]
-            if mat is None:
-                continue
-            if mat.use_nodes and mat.node_tree:
-                principled = None
-                emission = None
-                for n in mat.node_tree.nodes:
-                    if n.type == 'BSDF_PRINCIPLED' and principled is None:
-                        principled = n
-                    if n.type == 'EMISSION' and emission is None:
-                        emission = n
-                if principled:
-                    try:
-                        col = tuple(principled.inputs['Base Color'].default_value)
-                    except:
-                        pass
-                if col is None and emission:
-                    try:
-                        col = tuple(emission.inputs['Color'].default_value)
-                    except:
-                        pass
-            else:
-                try:
-                    col = tuple(mat.diffuse_color)
-                except:
-                    pass
-        if col:
-            if len(col) == 3:
-                col = (col[0], col[1], col[2], 1.0)
-            try:
-                obj.color = col
-            except:
-                pass
-            try:
-                mat.diffuse_color = col
-            except:
-                pass
+
+        rad = math.radians(angle)
+        x = center[0] + (radius - 0.6) * math.cos(rad)
+        y = center[1] + (radius - 0.6) * math.sin(rad)
+
+        create_box(f"HallWall_{i}", (3.0, 0.5, height), loc=(x, y, height / 2), rot=(0, 0, rad), mat=wall_mat)
+
+    # 中央全息
+    holo_mat = mat_emissive("Hologram", color=COLORS["cyan"], strength=6.0)
+    create_torus(
+        "CentralHolo",
+        2.0,
+        0.1,
+        loc=(center[0], center[1], height / 2),
+        rot=(math.radians(90), 0, 0),
+        mat=holo_mat,
+    )
 
 
-# ---------------------------
-# Build world (main)
-# ---------------------------
-def build_world_and_prepare():
-    clear_scene()
-    try:
-        bpy.context.scene.unit_settings.system = 'METRIC'
-    except:
-        pass
+def create_spiral_staircase(center, height=6.0, radius=4.0, steps=32):
+    """螺旋樓梯"""
+    step_mat = mat_pbr("StairStep", color=(0.85, 0.85, 0.9, 1.0), rough=0.4, metallic=0.3)
 
-    # Lights & cam
-    bpy.ops.object.light_add(type='SUN', location=(80, -80, 120))
-    sun = bpy.context.object
-    sun.data.energy = 3.0
-    bpy.ops.object.light_add(type='AREA', location=(0, -80, 40))
-    area = bpy.context.object
-    area.data.energy = 400.0
-    area.data.size = 20.0
-    bpy.ops.object.camera_add(location=(0, -20, 8), rotation=(math.radians(75), 0, 0))
+    h_step = height / steps
+    angle_step = (2 * math.pi * 1.5) / steps
+
+    for i in range(steps):
+        angle = i * angle_step
+        x = center[0] + radius * math.cos(angle)
+        y = center[1] + radius * math.sin(angle)
+        z = 0.2 + i * h_step
+
+        create_box(f"Step_{i}", (2.5, 0.8, 0.15), loc=(x, y, z), rot=(0, 0, angle), mat=step_mat)
+
+    # 中央柱
+    pillar_mat = mat_emissive("Pillar", color=COLORS["cyan"], strength=2.0)
+    create_cylinder("StairPillar", 0.3, height + 0.5, loc=(center[0], center[1], (height + 0.5) / 2), mat=pillar_mat, verts=16)
+
+
+def create_lab_room(name, center, width=32, depth=28, height=8):
+    """實驗室房間（含屋頂）"""
+    floor_mat = mat_pbr(f"{name}_Floor", color=COLORS["white"], rough=0.4, metallic=0.05)
+    wall_mat = mat_pbr(f"{name}_Wall", color=(0.92, 0.92, 0.95, 1.0), rough=0.6)
+    ceiling_mat = mat_pbr(
+        f"{name}_Ceiling",
+        color=(0.88, 0.88, 0.92, 1.0),
+        rough=0.5,
+        emit_strength=1.0,
+    )
+
+    # 地板
+    create_plane(f"{name}_Floor", width, depth, loc=(center[0], center[1], center[2]), mat=floor_mat)
+
+    # 天花板（新增）
+    create_plane(
+        f"{name}_Ceiling",
+        width,
+        depth,
+        loc=(center[0], center[1], center[2] + height),
+        mat=ceiling_mat,
+    )
+
+    # 四面牆
+    hw, hd, hh = width / 2, depth / 2, height / 2
+    create_box(
+        f"{name}_North",
+        (width, 0.4, height),
+        loc=(center[0], center[1] + hd, center[2] + hh),
+        mat=wall_mat,
+    )
+    create_box(
+        f"{name}_South",
+        (width, 0.4, height),
+        loc=(center[0], center[1] - hd, center[2] + hh),
+        mat=wall_mat,
+    )
+    create_box(
+        f"{name}_East",
+        (0.4, depth, height),
+        loc=(center[0] + hw, center[1], center[2] + hh),
+        mat=wall_mat,
+    )
+    create_box(
+        f"{name}_West",
+        (0.4, depth, height),
+        loc=(center[0] - hw, center[1], center[2] + hh),
+        mat=wall_mat,
+    )
+
+    # 發光邊線
+    edge_mat = mat_emissive(f"{name}_Edge", color=COLORS["cyan"], strength=4.0)
+    corners = [(hw, hd), (hw, -hd), (-hw, hd), (-hw, -hd)]
+    for i, (ex, ey) in enumerate(corners):
+        create_cylinder(
+            f"{name}_EdgeLight_{i}",
+            0.1,
+            height,
+            loc=(center[0] + ex, center[1] + ey, center[2] + hh),
+            mat=edge_mat,
+            verts=8,
+        )
+
+
+def create_portal(name, loc, target_name=""):
+    """傳送門"""
+    # 外環
+    outer_mat = mat_emissive("PortalOuter", color=COLORS["purple"], strength=10.0)
+    create_torus(f"{name}_Outer", 2.5, 0.15, loc=loc, rot=(math.radians(90), 0, 0), mat=outer_mat)
+
+    # 內環
+    inner_mat = mat_emissive("PortalInner", color=COLORS["cyan"], strength=8.0)
+    create_torus(f"{name}_Inner", 2.0, 0.1, loc=loc, rot=(math.radians(90), 0, 0), mat=inner_mat)
+
+
+def create_light_bridge(name, start, end, width=4.0):
+    """發光橋"""
+    vec = Vector(end) - Vector(start)
+    length = vec.length
+    mid = (Vector(start) + Vector(end)) / 2
+    angle = math.atan2(vec.y, vec.x)
+
+    bridge_mat = mat_pbr("Bridge", color=COLORS["cyan"], emit_strength=6.0)
+    create_plane(name, length, width, loc=(mid.x, mid.y, start[2] + 0.05), rot=(0, 0, angle), mat=bridge_mat)
+
+
+# ============================================
+# 相機與燈光
+# ============================================
+def setup_camera_and_lighting(target=(0, 0, 3)):
+    """設置相機和燈光"""
+    # 相機
+    cam_loc = (target[0] + 25, target[1] + 30, target[2] + 20)
+    bpy.ops.object.camera_add(location=cam_loc)
     cam = bpy.context.object
-    cam.name = "PreviewCamera"
+
+    direction = Vector(target) - Vector(cam_loc)
+    cam.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
+
     bpy.context.scene.camera = cam
 
-    # Env + LOD forest
-    create_ground()
-    create_sky_dome(radius=180)
-    create_dense_forest_lod(rows=7, cols=7, spacing=16, base_y=-140)
-
-    # entrance & door
-    create_circular_hall(radius=8.5, height=14.0, position=WORLD_LAYOUT["entrance_hall"])
-    create_rect_room_with_doorgap("EntranceRoomShell", 18, 18, 14, position=WORLD_LAYOUT["entrance_hall"])
-    door_pos = WORLD_LAYOUT["auto_door"]
-    door = create_sliding_door_group(position=door_pos, width=DOOR_WIDTH, height=DOOR_HEIGHT, thickness=0.12, orientation='Y')
-    return {"camera": cam, "door": door}
+    # 主光源
+    bpy.ops.object.light_add(type='SUN', location=(20, 20, 40))
+    sun = bpy.context.object
+    sun.data.energy = 1.5
 
 
-def finalize_and_export(prep, frame_start=1, frame_open=36, frame_close=120):
-    door = prep.get("door")
-    # other rooms & features
-    create_projection_plane(position=(WORLD_LAYOUT["entrance_hall"][0], WORLD_LAYOUT["entrance_hall"][1] + 2, 4), w=6, h=3)
-    create_rect_room_with_doorgap("MotivationRoom", 16, 12, 6, position=WORLD_LAYOUT["motivation_room"])
-    create_rect_room_with_doorgap("TheoryRoom", 18, 14, 6, position=WORLD_LAYOUT["theory_room"])
-    create_rect_room_with_doorgap("ProgrammingRoom", 18, 14, 6, position=WORLD_LAYOUT["programming_room"])
-    create_rect_room_with_doorgap("FormulaRoom", 14, 12, 6, position=WORLD_LAYOUT["formula_room"])
-    create_rect_room_with_doorgap("SimulationCenter", 28, 20, 8, position=WORLD_LAYOUT["simulation_center"])
-    create_rect_room_with_doorgap("ConclusionRoom", 14, 12, 6, position=WORLD_LAYOUT["conclusion_room"])
-    create_rect_room_with_doorgap("FutureRoom", 14, 12, 6, position=WORLD_LAYOUT["future_room"])
-    create_bridge(position=(50, -160, 0), length=20, width=3)
-    create_portal_frame(position=(0, -120, 0))
-    create_spiral_staircase(center=(0, WORLD_LAYOUT["entrance_hall"][1] + 3, 0), steps=20, radius=3.5)
-    create_player_placeholder(position=(0, WORLD_LAYOUT["entrance_hall"][1] + 2, 0.5))
+# ============================================
+# 主建構函數
+# ============================================
+def build_ultimate_lab():
+    """建構完整場景"""
+    print("🚀 開始建構...")
 
-    # animate door as single action + NLA strip (no auto-trigger)
-    if door:
-        animate_sliding_door_as_action(door, frame_start=frame_start, frame_open=frame_open, frame_close=frame_close)
+    clear_scene()
+    setup_world()
 
-    # prepare black overlay png for Three.js fade (1x1)
-    save_black_overlay_png(OVERLAY_PNG)
+    print("🌌 星空...")
+    create_star_field(400, 280.0)
 
-    # tidy apply scales
-    for ob in [o for o in bpy.data.objects if o.type == 'MESH']:
-        bpy.context.view_layer.objects.active = ob
-        ob.select_set(True)
-        try:
-            bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-        except:
-            pass
-        ob.select_set(False)
+    print("🌲 森林...")
+    create_forest()
 
-    # ensure export dir exists
-    export_dir = os.path.dirname(EXPORT_PATH)
-    if export_dir and not os.path.exists(export_dir):
-        try:
-            os.makedirs(export_dir, exist_ok=True)
-        except:
-            pass
+    print("🛤️  步道...")
+    create_ground_and_path()
 
-    set_all_view3d_to_material_preview()
-    apply_material_color_to_object_viewport()
+    print("🚪 自動門...")
+    create_auto_door(LAYOUT["auto_door"])
 
-    # export GLB with animations
-    bpy.ops.export_scene.gltf(filepath=EXPORT_PATH, export_format='GLB', export_apply=True, export_yup=True, export_animations=True)
-    print("Exported GLB to:", EXPORT_PATH)
-    print("Overlay PNG:", OVERLAY_PNG)
-    return EXPORT_PATH
+    print("🏛️  入口大廳...")
+    create_entrance_hall(LAYOUT["entrance_hall"])
+
+    print("🌀 螺旋樓梯...")
+    create_spiral_staircase(LAYOUT["stair_end"])
+
+    # 房間
+    rooms = [
+        ("Motivation", LAYOUT["motivation_room"], 32, 28, 8),
+        ("Theory", LAYOUT["theory_room"], 32, 28, 8),
+        ("Programming", LAYOUT["programming_room"], 32, 28, 8),
+        ("Formula", LAYOUT["formula_room"], 32, 28, 8),
+        ("Simulation", LAYOUT["simulation_center"], 64, 48, 10),
+        ("Conclusion", LAYOUT["conclusion_room"], 32, 28, 8),
+        ("Future", LAYOUT["future_room"], 32, 28, 8),
+    ]
+
+    for room_name, center, w, d, h in rooms:
+        print(f"🏢 {room_name}...")
+        create_lab_room(room_name, center, w, d, h)
+
+    # 連接
+    print("🌀 傳送門...")
+    create_portal(
+        "Portal1",
+        (
+            LAYOUT["motivation_room"][0],
+            LAYOUT["motivation_room"][1] - 12,
+            LAYOUT["motivation_room"][2] + 3,
+        ),
+    )
+    create_portal(
+        "Portal2",
+        (
+            LAYOUT["programming_room"][0],
+            LAYOUT["programming_room"][1] - 12,
+            LAYOUT["programming_room"][2] + 3,
+        ),
+    )
+    create_portal(
+        "Portal3",
+        (
+            LAYOUT["simulation_center"][0],
+            LAYOUT["simulation_center"][1] - 22,
+            LAYOUT["simulation_center"][2] + 4,
+        ),
+    )
+
+    print("🌉 光橋...")
+    create_light_bridge(
+        "Bridge1",
+        (
+            LAYOUT["theory_room"][0],
+            LAYOUT["theory_room"][1] - 14,
+            LAYOUT["theory_room"][2],
+        ),
+        (
+            LAYOUT["programming_room"][0],
+            LAYOUT["programming_room"][1] + 14,
+            LAYOUT["programming_room"][2],
+        ),
+    )
+    create_light_bridge(
+        "Bridge2",
+        (
+            LAYOUT["formula_room"][0],
+            LAYOUT["formula_room"][1] - 14,
+            LAYOUT["formula_room"][2],
+        ),
+        (
+            LAYOUT["simulation_center"][0],
+            LAYOUT["simulation_center"][1] + 24,
+            LAYOUT["simulation_center"][2],
+        ),
+    )
+    create_light_bridge(
+        "Bridge3",
+        (
+            LAYOUT["conclusion_room"][0],
+            LAYOUT["conclusion_room"][1] - 14,
+            LAYOUT["conclusion_room"][2],
+        ),
+        (
+            LAYOUT["future_room"][0],
+            LAYOUT["future_room"][1] + 14,
+            LAYOUT["future_room"][2],
+        ),
+    )
+
+    print("📷 相機...")
+    setup_camera_and_lighting(LAYOUT["entrance_hall"])
+
+    # 渲染設置
+    bpy.context.scene.render.engine = 'BLENDER_EEVEE_NEXT'  # Blender 5.0 使用 EEVEE_NEXT
+    try:
+        bpy.context.scene.eevee.use_bloom = True
+    except:
+        pass
+
+    print("✅ 完成！")
 
 
-# ---------------------------
-# Run
-# ---------------------------
+# ============================================
+# 匯出
+# ============================================
+def export_glb(path):
+    """匯出 GLB"""
+    try:
+        bpy.ops.export_scene.gltf(
+            filepath=path,
+            export_format='GLB',
+            export_yup=True,
+            export_animations=True,
+            export_apply=True,
+        )
+        return True
+    except Exception as e:
+        print(f"❌ 匯出失敗: {e}")
+        return False
+
+
+# ============================================
+# 執行
+# ============================================
+def main():
+    build_ultimate_lab()
+
+    success = export_glb(EXPORT_PATH)
+    if success:
+        print(f"🎉 成功匯出到: {EXPORT_PATH}")
+    else:
+        print("❌ 匯出失敗")
+
+
 if __name__ == "__main__":
-    if not bpy.data.is_saved:
-        print("Warning: .blend not saved. Export will go to:", EXPORT_DIR)
-    prep = build_world_and_prepare()
-    out = finalize_and_export(prep, frame_start=1, frame_open=36, frame_close=120)
-    print("Done. GLB:", out)
+    main()
