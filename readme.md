@@ -20,6 +20,7 @@
 
 - `is_teleport_door`：是否為傳送門
 - `teleport_target`：目標房間名稱
+- `teleport_target_position`：目標座標 `[x, y, z]`
 - `trigger_radius`：觸發半徑
 - `portal_ring`：對應傳送環物件名稱
 

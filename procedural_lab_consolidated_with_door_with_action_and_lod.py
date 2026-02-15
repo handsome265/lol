@@ -172,40 +172,46 @@ def sliding_door(name, pos):
     anchor = bpy.data.objects.new(f"{name}_Anchor", None)
     bpy.context.scene.collection.objects.link(anchor)
     anchor.location = (x, y, z)
+    anchor.empty_display_type = "SPHERE"
+    anchor.empty_display_size = 0.35
 
     fm=mat_pbr(f"{name}_Frame", THEME["steel"], 0.24, 0.86, emit=0.2)
     gm=mat_glass(f"{name}_Glass")
     sm=mat_emit(f"{name}_Strip", THEME["cyan"], 12)
-    box(f"{name}_Top", (DOOR_W,0.35,0.35), (x,y,z+DOOR_H+0.2), mat=fm)
-    box(f"{name}_LC", (0.35,0.35,DOOR_H), (x-DOOR_W/2,y,z+DOOR_H/2), mat=fm)
-    box(f"{name}_RC", (0.35,0.35,DOOR_H), (x+DOOR_W/2,y,z+DOOR_H/2), mat=fm)
+    top=box(f"{name}_Top", (DOOR_W,0.35,0.35), (x,y,z+DOOR_H+0.2), mat=fm)
+    lc=box(f"{name}_LC", (0.35,0.35,DOOR_H), (x-DOOR_W/2,y,z+DOOR_H/2), mat=fm)
+    rc=box(f"{name}_RC", (0.35,0.35,DOOR_H), (x+DOOR_W/2,y,z+DOOR_H/2), mat=fm)
     pw=DOOR_W/2-0.2
     l=box(f"{name}_L", (pw,0.12,DOOR_H-0.25), (x-pw/2,y,z+DOOR_H/2), mat=gm)
     r=box(f"{name}_R", (pw,0.12,DOOR_H-0.25), (x+pw/2,y,z+DOOR_H/2), mat=gm)
-    box(f"{name}_LS", (0.05,0.14,DOOR_H-0.8), (l.location.x,y-0.07,z+DOOR_H/2), mat=sm)
-    box(f"{name}_RS", (0.05,0.14,DOOR_H-0.8), (r.location.x,y-0.07,z+DOOR_H/2), mat=sm)
+    ls=box(f"{name}_LS", (0.05,0.14,DOOR_H-0.8), (l.location.x,y-0.07,z+DOOR_H/2), mat=sm)
+    rs=box(f"{name}_RS", (0.05,0.14,DOOR_H-0.8), (r.location.x,y-0.07,z+DOOR_H/2), mat=sm)
     l.keyframe_insert(data_path="location", frame=1); l.location.x -= DOOR_W*0.62; l.keyframe_insert(data_path="location", frame=80)
     r.keyframe_insert(data_path="location", frame=1); r.location.x += DOOR_W*0.62; r.keyframe_insert(data_path="location", frame=80)
-    l.parent = anchor
-    r.parent = anchor
+    for part in (top, lc, rc, l, r, ls, rs):
+        part.parent = anchor
     return {"anchor": anchor, "left": l, "right": r}
 
 
-def add_teleport_metadata(door_obj, target_name, trigger_radius=2.2):
+def add_teleport_metadata(door_obj, target_name, target_position=None, trigger_radius=2.2):
     """Mark a door anchor as a teleport trigger for engine-side scripts."""
     if not door_obj:
         return
     door_obj["is_teleport_door"] = True
     door_obj["teleport_target"] = str(target_name)
+    if target_position is not None:
+        tx, ty, tz = target_position
+        door_obj["teleport_target_position"] = [float(tx), float(ty), float(tz)]
     door_obj["trigger_radius"] = float(trigger_radius)
 
 
-def create_teleport_gate(name, pos, target_name):
+def create_teleport_gate(name, pos, target_name, target_position=None):
     """Build a sliding door + portal ring and tag it as a teleport gate."""
     d = sliding_door(name, pos)
     x, y, z = pos
     ring = torus(f"{name}_PortalRing", 2.1, 0.08, (x, y + 0.18, z + 2.0), rot=(math.radians(90), 0, 0), mat=mat_emit(f"{name}_PortalM", THEME["cyan"], 10))
-    add_teleport_metadata(d["anchor"], target_name, trigger_radius=2.4)
+    ring.parent = d["anchor"]
+    add_teleport_metadata(d["anchor"], target_name, target_position=target_position, trigger_radius=2.4)
     # useful for debugging/preview inside Blender
     d["anchor"]["portal_ring"] = ring.name
     return d
@@ -311,15 +317,15 @@ def build():
     corridor("C5", edge(rs["formula"],"-y"), edge(rs["simulation"],"+y"), 8, 5)
     corridor("C6", edge(rs["simulation"],"-y"), edge(rs["conclusion"],"+y"), 8, 5)
     corridor("C7", edge(rs["conclusion"],"-y"), edge(rs["future"],"+y"), 8, 5)
-    gate = create_teleport_gate("Gate", LAYOUT["gate"], target_name="Motivation")
+    gate = create_teleport_gate("Gate", LAYOUT["gate"], target_name="Motivation", target_position=LAYOUT["motivation"])
     bridge("B1", (32,-132,0), (96,-132,0), 5)
     bridge("B2", (128,-168,0), (128,-224,0), 5)
     create = lambda n,p: torus(n,2.2,0.1,p,rot=(math.radians(90),0,0),mat=mat_emit(n+"M",THEME["cyan"],8))
     create("Portal1", (0,-106,3.5)); create("Portal2", (128,-248,3.5))
     # extra teleport gates (engine reads custom properties)
-    create_teleport_gate("TeleGate_Motivation", (0, -118, 0), target_name="Theory")
-    create_teleport_gate("TeleGate_Theory", (64, -118, 0), target_name="Programming")
-    create_teleport_gate("TeleGate_Programming", (128, -118, 0), target_name="Formula")
+    create_teleport_gate("TeleGate_Motivation", (0, -118, 0), target_name="Theory", target_position=LAYOUT["theory"])
+    create_teleport_gate("TeleGate_Theory", (64, -118, 0), target_name="Programming", target_position=LAYOUT["programming"])
+    create_teleport_gate("TeleGate_Programming", (128, -118, 0), target_name="Formula", target_position=LAYOUT["formula"])
     # hall and devices
     cylinder("HallOuter",10.5,13.5,(0,-72,6.75),verts=64,mat=mat_pbr("HallW",THEME["white"],0.3,0.1))
     create_server = lambda c: [box(f"Rack_{i}",(2.2,1.3,5.5),(c[0]-7.5+i*3,c[1],c[2]+2.75),mat=mat_pbr("RackM",(0.12,0.14,0.18,1),0.48,0.5)) for i in range(6)]
