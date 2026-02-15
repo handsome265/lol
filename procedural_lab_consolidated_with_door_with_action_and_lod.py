@@ -16,6 +16,7 @@ else:
 OVERLAY_PATH = os.path.join(os.path.dirname(EXPORT_PATH), "overlay_black.png")
 random.seed(424242)
 WALL = 0.25
+CORNER_OVERLAP = 0.06  # small overlap to avoid visible corner seams
 DOOR_W = 6.0
 DOOR_H = 4.0
 LAYOUT = {"lobby": (0,-72,0), "gate":(0,-36,0), "motivation":(0,-132,0), "theory":(64,-132,0), "programming":(128,-132,0), "formula":(128,-208,0), "simulation":(128,-300,0), "conclusion":(128,-388,0), "future":(128,-472,0)}
@@ -117,11 +118,32 @@ def room(center, w, d, h, prefix):
     hw,hd=w/2,d/2
     box(f"{prefix}_Floor", (w,d,0.2), (x,y,z-0.1), mat=fm)
     box(f"{prefix}_Ceil", (w,d,0.2), (x,y,z+h+0.1), mat=cm)
-    box(f"{prefix}_N", (w,WALL,h), (x,y+hd-WALL/2,z+h/2), mat=wm)
-    box(f"{prefix}_S", (w,WALL,h), (x,y-hd+WALL/2,z+h/2), mat=wm)
-    box(f"{prefix}_E", (d,WALL,h), (x+hw-WALL/2,y,z+h/2), rot=(0,0,math.radians(90)), mat=wm)
-    box(f"{prefix}_W", (d,WALL,h), (x-hw+WALL/2,y,z+h/2), rot=(0,0,math.radians(90)), mat=wm)
+    # extend wall lengths slightly so corners overlap and appear fully sealed
+    box(f"{prefix}_N", (w + CORNER_OVERLAP, WALL, h), (x, y + hd - WALL/2, z + h/2), mat=wm)
+    box(f"{prefix}_S", (w + CORNER_OVERLAP, WALL, h), (x, y - hd + WALL/2, z + h/2), mat=wm)
+    box(f"{prefix}_E", (d + CORNER_OVERLAP, WALL, h), (x + hw - WALL/2, y, z + h/2), rot=(0,0,math.radians(90)), mat=wm)
+    box(f"{prefix}_W", (d + CORNER_OVERLAP, WALL, h), (x - hw + WALL/2, y, z + h/2), rot=(0,0,math.radians(90)), mat=wm)
     return {"center":center,"w":w,"d":d,"h":h}
+
+def add_internal_partitions(room_obj, prefix, count=2, axis="x"):
+    """Add internal divider walls so rooms feel like real lab/house spaces."""
+    x, y, z = room_obj["center"]
+    w, d, h = room_obj["w"], room_obj["d"], room_obj["h"]
+    pm = mat_pbr(f"{prefix}_Partition", (0.90,0.92,0.97,1), 0.55, 0.08)
+    dm = mat_emit(f"{prefix}_PartitionLight", THEME["cyan"], 6.5)
+
+    if axis == "x":
+        spacing = w / (count + 1)
+        for i in range(count):
+            px = x - w/2 + spacing * (i + 1)
+            box(f"{prefix}_Part_{i}", (WALL, d * 0.78, h * 0.88), (px, y, z + h * 0.44), mat=pm)
+            box(f"{prefix}_PartLight_{i}", (WALL + 0.01, d * 0.60, 0.08), (px, y, z + h * 0.86), mat=dm)
+    else:
+        spacing = d / (count + 1)
+        for i in range(count):
+            py = y - d/2 + spacing * (i + 1)
+            box(f"{prefix}_Part_{i}", (w * 0.78, WALL, h * 0.88), (x, py, z + h * 0.44), mat=pm)
+            box(f"{prefix}_PartLight_{i}", (w * 0.60, WALL + 0.01, 0.08), (x, py, z + h * 0.86), mat=dm)
 
 def edge(r, d):
     x,y,z=r["center"]
@@ -244,6 +266,16 @@ def build():
     rs={}
     for k,c in LAYOUT.items():
         if k in ROOM_SPECS: rs[k]=room(c,*ROOM_SPECS[k], prefix=k.capitalize())
+
+    # internal partitions -> stronger "real building" feel (separated functional subspaces)
+    add_internal_partitions(rs["lobby"], "Lobby", count=2, axis="x")
+    add_internal_partitions(rs["motivation"], "Motivation", count=1, axis="y")
+    add_internal_partitions(rs["theory"], "Theory", count=2, axis="x")
+    add_internal_partitions(rs["programming"], "Programming", count=2, axis="x")
+    add_internal_partitions(rs["formula"], "Formula", count=1, axis="y")
+    add_internal_partitions(rs["simulation"], "Simulation", count=3, axis="x")
+    add_internal_partitions(rs["conclusion"], "Conclusion", count=1, axis="y")
+    add_internal_partitions(rs["future"], "Future", count=1, axis="y")
     # corridors no gaps
     corridor("C1", edge(rs["lobby"],"-y"), edge(rs["motivation"],"+y"), 8, 5)
     corridor("C2", edge(rs["motivation"],"+x"), edge(rs["theory"],"-x"), 8, 5)
