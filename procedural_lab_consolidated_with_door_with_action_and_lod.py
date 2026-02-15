@@ -210,7 +210,12 @@ def lights_camera_render():
 
 def fade_panel(cam):
     p=plane("FadePanel",8,8,(0,0,0)); p.parent=cam; p.location=Vector((0,0,-1.0))
-    m=bpy.data.materials.new("FadeMat"); m.use_nodes=True; m.blend_method="BLEND"; m.shadow_method="NONE"
+    m=bpy.data.materials.new("FadeMat"); m.use_nodes=True; m.blend_method="BLEND"
+    # Blender build compatibility: some versions do not expose shadow_method on Material
+    try:
+        m.shadow_method = "NONE"
+    except Exception:
+        pass
     n=m.node_tree.nodes; l=m.node_tree.links; n.clear()
     out=n.new(type="ShaderNodeOutputMaterial")
     tr=n.new(type="ShaderNodeBsdfTransparent")
