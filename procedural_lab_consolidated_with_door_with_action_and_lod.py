@@ -309,6 +309,65 @@ def create_corridor(name, start, end, width=8, z=0):
     plane(f"{name}_EdgeR", length, 0.26, loc=(center.x, center.y - width / 2 + 0.15, z + 0.05), rot=(0, 0, angle), mat=edge_r)
 
 
+def room_edge_port(center, size, direction):
+    """Return a connection point snapped to a room wall edge.
+
+    direction: '+x', '-x', '+y', '-y'
+    """
+    x, y, z = center
+    w, d, h = size
+    if direction == '+x':
+        return (x + w / 2, y, z)
+    if direction == '-x':
+        return (x - w / 2, y, z)
+    if direction == '+y':
+        return (x, y + d / 2, z)
+    return (x, y - d / 2, z)
+
+
+def create_enclosed_corridor(name, start, end, width=8, height=5.2, thickness=0.32, z=0):
+    """Create a sealed corridor (floor + ceiling + side walls) between two room-edge ports.
+
+    This avoids visual gaps where only a flat floor strip existed.
+    """
+    v = Vector(end) - Vector(start)
+    length = v.length
+    center = (Vector(start) + Vector(end)) / 2
+    angle = math.atan2(v.y, v.x)
+
+    floor_mat = mat_pbr(f"{name}_Floor", (0.22, 0.24, 0.30, 1), rough=0.30, metal=0.72)
+    ceil_mat = mat_pbr(f"{name}_Ceil", (0.84, 0.88, 0.95, 1), rough=0.45, metal=0.12)
+    wall_mat = mat_pbr(f"{name}_Wall", COLORS["panel"], rough=0.52, metal=0.16)
+    edge_mat = mat_neon(f"{name}_Edge", COLORS["cyan"], 10)
+
+    # Floor / Ceiling
+    plane(f"{name}_FloorMesh", length, width, loc=(center.x, center.y, z + 0.03), rot=(0, 0, angle), mat=floor_mat)
+    plane(f"{name}_CeilMesh", length, width, loc=(center.x, center.y, z + height), rot=(0, 0, angle), mat=ceil_mat)
+
+    # Side walls
+    off = width / 2 + thickness / 2
+    px = -math.sin(angle)
+    py = math.cos(angle)
+    box(
+        f"{name}_WallL",
+        (length, thickness, height),
+        loc=(center.x + px * off, center.y + py * off, z + height / 2),
+        rot=(0, 0, angle),
+        mat=wall_mat,
+    )
+    box(
+        f"{name}_WallR",
+        (length, thickness, height),
+        loc=(center.x - px * off, center.y - py * off, z + height / 2),
+        rot=(0, 0, angle),
+        mat=wall_mat,
+    )
+
+    # Inner neon strips
+    plane(f"{name}_NeonL", length, 0.10, loc=(center.x + px * (off - thickness / 2), center.y + py * (off - thickness / 2), z + height - 0.12), rot=(0, 0, angle), mat=edge_mat)
+    plane(f"{name}_NeonR", length, 0.10, loc=(center.x - px * (off - thickness / 2), center.y - py * (off - thickness / 2), z + height - 0.12), rot=(0, 0, angle), mat=edge_mat)
+
+
 def create_light_bridge(name, start, end, width=7.0):
     v = Vector(end) - Vector(start)
     length = v.length
@@ -495,10 +554,56 @@ def build_ultimate_sci_fi_lab():
     create_room("PhysicsLab", LAYOUT["physics_lab"], ROOM_SIZE["physics_lab"], COLORS["cyan"])
     create_room("ControlCenter", LAYOUT["control_center"], ROOM_SIZE["control_center"], COLORS["purple"])
 
-    # Corridors and bridges
-    create_corridor("Cor_Lobby_to_Common", LAYOUT["lobby"], LAYOUT["common_lab"], width=8, z=0)
-    create_corridor("Cor_Lobby_to_Rest", LAYOUT["lobby"], LAYOUT["rest_area"], width=8, z=0)
-    create_corridor("Cor_Lobby_to_Service", LAYOUT["lobby"], LAYOUT["service_core"], width=8, z=0)
+    # Corridors (sealed edge-to-edge connectors to avoid wall gaps)
+    create_enclosed_corridor(
+        "Cor_Lobby_to_Common",
+        room_edge_port(LAYOUT["lobby"], ROOM_SIZE["lobby"], '+x'),
+        room_edge_port(LAYOUT["common_lab"], ROOM_SIZE["common_lab"], '-x'),
+        width=8,
+        height=5.2,
+        z=0,
+    )
+    create_enclosed_corridor(
+        "Cor_Lobby_to_Rest",
+        room_edge_port(LAYOUT["lobby"], ROOM_SIZE["lobby"], '-x'),
+        room_edge_port(LAYOUT["rest_area"], ROOM_SIZE["rest_area"], '+x'),
+        width=8,
+        height=5.2,
+        z=0,
+    )
+    create_enclosed_corridor(
+        "Cor_Lobby_to_Service",
+        room_edge_port(LAYOUT["lobby"], ROOM_SIZE["lobby"], '-y'),
+        room_edge_port(LAYOUT["service_core"], ROOM_SIZE["service_core"], '+y'),
+        width=8,
+        height=5.2,
+        z=0,
+    )
+
+    create_enclosed_corridor(
+        "Cor_AI_to_Chem",
+        room_edge_port(LAYOUT["ai_lab"], ROOM_SIZE["ai_lab"], '-x'),
+        room_edge_port(LAYOUT["chem_lab"], ROOM_SIZE["chem_lab"], '+x'),
+        width=8,
+        height=5.2,
+        z=6,
+    )
+    create_enclosed_corridor(
+        "Cor_Chem_to_Physics",
+        room_edge_port(LAYOUT["chem_lab"], ROOM_SIZE["chem_lab"], '-x'),
+        room_edge_port(LAYOUT["physics_lab"], ROOM_SIZE["physics_lab"], '+x'),
+        width=8,
+        height=5.2,
+        z=6,
+    )
+    create_enclosed_corridor(
+        "Cor_Physics_to_Control",
+        room_edge_port(LAYOUT["physics_lab"], ROOM_SIZE["physics_lab"], '-y'),
+        room_edge_port(LAYOUT["control_center"], ROOM_SIZE["control_center"], '+x'),
+        width=8,
+        height=5.2,
+        z=6,
+    )
 
     create_light_bridge("Bridge_AI_Chem", LAYOUT["ai_lab"], LAYOUT["chem_lab"], width=7)
     create_light_bridge("Bridge_Chem_Phys", LAYOUT["chem_lab"], LAYOUT["physics_lab"], width=7)
